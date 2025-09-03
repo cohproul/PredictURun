@@ -201,8 +201,8 @@ def simulate_course(lat_i, lon_i, ele_i, s_i, CS, Dprime, V0, cfg: SimConfig) ->
     return SimResult(T, c_star, df)
 
 # ================= UI Streamlit =================
-st.set_page_config(page_title="PredictURun — CS/D′ GPX", layout="wide")
-st.title("PredictURun — CS/D′ (GPX, D′bal, relief, température)")
+st.set_page_config(page_title="PredictURun — CS/D′ GPX", layout="centered")
+st.title("PredictURun — Optimisation de stratégies de course")
 
 with st.sidebar:
     st.header("Paramètres")
@@ -218,9 +218,9 @@ with st.sidebar:
     surface_options = {
         "Piste tartan": 1.00,
         "Route / Asphalte": 1.01,
-        "Béton": 1.02,
+        "Béton": 1.015,
         "Gazon (court)": 1.04,
-        "Gravier / Chemin dur": 1.06,
+        "Gravier / Chemin dur": 1.024,
         "Trail roulant": 1.08,
         "Trail technique": 1.15,
         "Sable tassé": 1.20,
@@ -239,10 +239,10 @@ with st.sidebar:
 
 st.subheader("1) Chronos de test")
 c1, c2, c3, c4 = st.columns(4)
-with c1: t20 = st.text_input("20 m (s)", value="2.32")
-with c2: t1000 = st.text_input("1000 m", value="2:45")
-with c3: t2000 = st.text_input("2000 m", value="5:55")
-with c4: t3200 = st.text_input("3200 m", value="9:50")
+with c1: t20 = st.text_input("20 m (s)", value=" ")
+with c2: t1000 = st.text_input("1000 m", value=" ")
+with c3: t2000 = st.text_input("2000 m", value=" ")
+with c4: t3200 = st.text_input("3200 m", value=" ")
 
 btn_calc = st.button("Calculer V0 / CS / D′")
 V0 = CS = Dprime = None
@@ -262,7 +262,7 @@ if btn_calc:
         with m3: st.metric("D′ (m)", f"{Dprime:.1f}")
 
 st.markdown("---")
-st.subheader("2) Fichier GPX (analyse 5 m + carte + profil)")
+st.subheader("2) Fichier GPX (analyse au 10 m)")
 gpx_file = st.file_uploader("Choisir un .gpx", type=["gpx"])
 
 if gpx_file is not None:
@@ -280,8 +280,8 @@ if gpx_file is not None:
         st.stop()
 
     st.success(f"GPX chargé : {dist[-1]/1000:.2f} km — points bruts: {len(lat)}")
-    lat_i, lon_i, ele_i, s_i = resample_track(lat, lon, ele, dist, 5.0)
-    st.caption(f"Resample: {len(lat_i)} points (pas 5 m)")
+    lat_i, lon_i, ele_i, s_i = resample_track(lat, lon, ele, dist, 10.0)
+    st.caption(f"Resample: {len(lat_i)} points (par 10 m)")
 
     # ---------------- Carte (couleurs version 10) ----------------
     path = [[float(lon_i[k]), float(lat_i[k])] for k in range(len(lon_i))]
@@ -292,11 +292,11 @@ if gpx_file is not None:
     df_km = pd.DataFrame({"lon": lon_i[idx], "lat": lat_i[idx], "km": [int(km/1000) for km in km_marks]})
 
     layers = [
-        pdk.Layer("PathLayer", data=df_path, get_path="path", get_color=[255, 0, 0], width_min_pixels=4),   # rouge
-        pdk.Layer("ScatterplotLayer", data=df_km, get_position="[lon, lat]", get_radius=12, get_color=[0, 0, 255]),  # bleu
+        pdk.Layer("PathLayer", data=df_path, get_path="path", get_color=[121, 156, 19], width_min_pixels=4),   # vert
+        pdk.Layer("ScatterplotLayer", data=df_km, get_position="[lon, lat]", get_radius=10, get_color=[0, 0, 255]),  # bleu
         pdk.Layer("TextLayer",
                   data=[{"position":[float(r["lon"]), float(r["lat"])], "text": str(int(r["km"]))} for _, r in df_km.iterrows()],
-                  get_position="position", get_text="text", get_size=16, get_color=[0, 0, 0], get_alignment_baseline="'bottom'")  # noir
+                  get_position="position", get_text="text", get_size=20, get_color=[255, 255, 255], get_alignment_baseline="'bottom'")  # blanc
     ]
     view_state = pdk.ViewState(latitude=float(np.mean(lat_i)), longitude=float(np.mean(lon_i)), zoom=12, pitch=45)
     map_style = "mapbox://styles/mapbox/satellite-v9" if os.environ.get("MAPBOX_API_KEY") else None
@@ -441,4 +441,4 @@ w = \min(1, D'/500)\cdot \text{poids}
             st.latex(r"v_{100} = \frac{100}{\sum dt_{(100m)}},\qquad \text{allure} = \frac{1000}{v_{100}}\; (\text{min:s/km})")
             st.markdown("On affiche aussi le **temps écoulé** à la fin de chaque 100 m.")
 
-st.caption("Modèle: CS/D′ + température (optimum 15 °C) + surface + pente (Minetti/linéaire) pondéré par D′, pas 5 m.")
+st.caption("Modèle: CS/D′ + température (optimum 15 °C) + surface + pente (Minetti/linéaire) pondéré par D′, par 10 m.")
