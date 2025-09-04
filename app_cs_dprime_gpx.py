@@ -139,6 +139,8 @@ class SimConfig:
     tempC: float = 15.0
     dprime_relief_weight: float = 0.5
     target_arrival_reserve_pct: float = 10.0
+    # (optionnel) si tu veux forcer une valeur précise :
+    v1500_cap_mps: float | None = None   # None => on calcule depuis CS/D′/V0
 
 @dataclass
 class SimResult:
@@ -146,59 +148,109 @@ class SimResult:
     v_eq_target: float
     df: pd.DataFrame  # s_m, km, grade, cost, CS_i, V0_i, v, dt, ds, Dprime_bal
 
-def simulate_course(lat_i, lon_i, ele_i, s_i, CS, Dprime, V0, cfg: SimConfig) -> SimResult:
-    # Ajustement température
+def simulate_course(lat_i, lon_i, ele_i, s_i,
+                    CS, Dprime, V0,
+                    cfg: SimConfig) -> SimResult:
+    """
+    - CS en m/s ; Dprime en m ; V0 en m/s (optionnel, peut être None)
+    - Cap vitesse : v(t) <= v1500 (vitesse moyenne max prédite sur 1500 m)
+    """
+    # --- Ajustement température (comme avant) ---
     fT = temperature_speed_factor(cfg.tempC)
-    CS *= fT; V0 *= fT
+    CS_adj = CS * fT
+    V0_adj = (V0 * fT) if (V0 is not None) else None
 
+    # ---------- Calcul du plafond v1500 à partir de CS/D′ (+ V0 si fourni) ----------
+    # Temps "modèle" sur 1500 m (sans autre plafond) : t_model = (D - D′)/CS
+    D_1500 = 1500.0
+    t_model_1500 = max(0.0, (D_1500 - Dprime) / max(1e-6, CS_adj))
+    # Si V0 existe, le temps moyen sur 1500 m ne peut pas être < 1500/V0
+    if V0_adj is not None and V0_adj > 0:
+        t1500 = max(t_model_1500, D_1500 / V0_adj)
+    else:
+        t1500 = t_model_1500 if t_model_1500 > 0 else float("inf")
+    v1500_cap = (cfg.v1500_cap_mps if cfg.v1500_cap_mps is not None
+                 else (D_1500 / t1500 if np.isfinite(t1500) and t1500 > 0 else float("inf")))
+
+    # --- Géométrie parcours / pentes (inchangé) ---
     ds = np.diff(s_i); de = np.diff(ele_i)
     valid = ds > 0.05
     ds = ds[valid]; de = de[valid]
     grades = moving_average(de / ds, 5)
 
-    base_cost = np.array([minetti_cost_factor(g) for g in grades]) if cfg.use_minetti \
-                else np.array([linear_grade_cost(g, cfg.kup, cfg.kdown) for g in grades])
-    cost = np.array([apply_dprime_weight_to_cost(c, g, Dprime, cfg.dprime_relief_weight) for c, g in zip(base_cost, grades)])
+    # --- Coûts (Minetti vs linéaire) + pondération D′ relief (inchangé) ---
+    base_cost = (np.array([minetti_cost_factor(g) for g in grades]) if cfg.use_minetti
+                 else np.array([linear_grade_cost(g, cfg.kup, cfg.kdown) for g in grades]))
+    cost = np.array([
+        apply_dprime_weight_to_cost(c, g, Dprime, cfg.dprime_relief_weight)
+        for c, g in zip(base_cost, grades)
+    ])
+    # Surface globale (facteur multiplicatif sur le coût)
     cost *= cfg.surface_factor
 
-    CS_i = CS / cost
-    V0_i = V0 / cost
+    # --- CS/V0 locaux (inchangé) ---
+    CS_i = CS_adj / cost
+    V0_i = (V0_adj / cost) if (V0_adj is not None) else None
 
-    target_used = Dprime * (1.0 - cfg.target_arrival_reserve_pct/100.0)
+    # --- Cible de D′ utilisé (inchangé) ---
+    target_used = Dprime * (1.0 - cfg.target_arrival_reserve_pct / 100.0)
 
     def simulate_for_c(c):
-        v = np.minimum(V0_i, CS_i + c)
-        dt = ds / np.maximum(0.1, v)
-        used = np.sum((v - CS_i) * dt)
+        # Vitesse cible locale avant plafonds
+        v_raw = CS_i + c
+        # Plafond V0 local si fourni
+        if V0_i is not None:
+            v_raw = np.minimum(v_raw, V0_i)
+        # ⚠️ NOUVEAU : Plafond "vitesse max 1500 m" global
+        v = np.minimum(v_raw, v1500_cap)
+
+        # Sécurité
+        v = np.maximum(v, 0.1)
+        dt = ds / v
+
+        # D′ consommé (au-dessus de CS local)
+        above = np.maximum(0.0, v - CS_i)
+        used = float(np.sum(above * dt))
+
         T = float(np.sum(dt))
         return used, T, v, dt
 
-    c_max = float(np.max(np.maximum(0.0, V0_i - CS_i)))
+    # Recherche de c pour atteindre la cible de D′ utilisé (inchangé)
+    c_max = float(np.max(np.maximum(0.0, (V0_i if V0_i is not None else (CS_i + 5.0)) - CS_i)))
     low, high = 0.0, c_max
     used_high, _, _, _ = simulate_for_c(high)
     if used_high < target_used:
         used, T, v, dt = simulate_for_c(high)
-        d_cum = np.cumsum((v - CS_i) * dt)
+        d_cum = np.cumsum(np.maximum(0.0, v - CS_i) * dt)
         Dbal = Dprime - d_cum
-        s_mid = (s_i[:-1] + s_i[1:]) / 2
-        df = pd.DataFrame({"s_m": s_mid, "km": s_mid/1000.0, "grade": grades, "cost": cost,
-                           "CS_i": CS_i, "V0_i": V0_i, "v": v, "dt": dt, "ds": ds, "Dprime_bal": Dbal})
+        s_mid = (s_i[:-1] + s_i[1:])[valid] / 2
+        df = pd.DataFrame({
+            "s_m": s_mid, "km": s_mid / 1000.0, "grade": grades, "cost": cost,
+            "CS_i": CS_i, "V0_i": (V0_i if V0_i is not None else np.nan),
+            "v": v, "dt": dt, "ds": ds, "Dprime_bal": Dbal
+        })
         return SimResult(T, high, df)
 
     for _ in range(60):
-        mid = 0.5*(low+high)
+        mid = 0.5 * (low + high)
         used_mid, _, _, _ = simulate_for_c(mid)
-        if used_mid > target_used: high = mid
-        else:                      low = mid
-    c_star = 0.5*(low+high)
+        if used_mid > target_used:
+            high = mid
+        else:
+            low = mid
+    c_star = 0.5 * (low + high)
     used, T, v, dt = simulate_for_c(c_star)
 
-    d_cum = np.cumsum((v - CS_i) * dt)
+    d_cum = np.cumsum(np.maximum(0.0, v - CS_i) * dt)
     Dbal = Dprime - d_cum
-    s_mid = (s_i[:-1] + s_i[1:]) / 2
-    df = pd.DataFrame({"s_m": s_mid, "km": s_mid/1000.0, "grade": grades, "cost": cost,
-                       "CS_i": CS_i, "V0_i": V0_i, "v": v, "dt": dt, "ds": ds, "Dprime_bal": Dbal})
+    s_mid = (s_i[:-1] + s_i[1:])[valid] / 2
+    df = pd.DataFrame({
+        "s_m": s_mid, "km": s_mid / 1000.0, "grade": grades, "cost": cost,
+        "CS_i": CS_i, "V0_i": (V0_i if V0_i is not None else np.nan),
+        "v": v, "dt": dt, "ds": ds, "Dprime_bal": Dbal
+    })
     return SimResult(T, c_star, df)
+
 
 # ================= UI Streamlit =================
 st.set_page_config(page_title="PredictURun — CS/D′ GPX", layout="centered")
@@ -219,8 +271,8 @@ with st.sidebar:
         "Piste tartan": 1.00,
         "Route / Asphalte": 1.01,
         "Béton": 1.015,
-        "Gazon (court)": 1.04,
-        "Gravier / Chemin dur": 1.024,
+        "Gravier / Chemin dur": 1.04,
+        "Gazon": 1.06,
         "Trail roulant": 1.08,
         "Trail technique": 1.15,
         "Sable tassé": 1.20,
@@ -309,7 +361,7 @@ if gpx_file is not None:
     ax.set_xlabel("Distance (m)")
     ax.set_ylabel("Altitude (m)")
     ax.set_title("Profil altimétrique")
-    ax.xaxis.set_major_locator(MultipleLocator(500))  # repères tous les 500 m
+    ax.xaxis.set_major_locator(MultipleLocator(1000))  # repères tous les 1000 m
     st.pyplot(fig, use_container_width=True)
 
     # ---------------- Simulation ----------------
@@ -356,6 +408,7 @@ if gpx_file is not None:
                     m += 1
                     s = 0
                 return f"{m}:{s:02d}"
+                
 
             ax3.yaxis.set_major_formatter(FuncFormatter(_fmt_pace))
             st.pyplot(fig3, use_container_width=True)
@@ -367,10 +420,10 @@ if gpx_file is not None:
         df_seg["cum_time"] = df_seg["dt"].cumsum()
 
         rows = []
-        target = 100.0
+        target = 400.0
         total_dist = float(df_seg["cum_dist"].iloc[-1])
         while target <= total_dist + 1e-6:
-            start_d = max(0.0, target - 100.0)
+            start_d = max(0.0, target - 400.0)
             win = df_seg[(df_seg["cum_dist"] > start_d + 1e-9) & (df_seg["cum_dist"] <= target + 1e-9)]
             if not win.empty:
                 dist_m = float(win["ds"].sum())
@@ -387,7 +440,7 @@ if gpx_file is not None:
                     "Allure (min:s/km)": f"{mP}:{sP:02d}",
                     "Temps écoulé": (f"{h:d}h{mE:02d}m{sE:02d}s" if h>0 else f"{mE:02d}m{sE:02d}s")
                 })
-            target += 100.0
+            target += 400.0
         table100 = pd.DataFrame(rows)
         st.dataframe(table100, use_container_width=True)
 
