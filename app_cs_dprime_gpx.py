@@ -1,4 +1,4 @@
-# PredictURun — CS/D′ sur GPX (sécurisé LaTeX)
+# PredictURun - CS/D' sur GPX (sécurisé LaTeX)
 # Couleurs comme ta version (10) : tracé rouge, points km bleus, texte noir, thème Streamlit clair.
 # Ajouts : tableau 100 m (distance, allure du dernier 100 m, temps écoulé) + explications avec st.latex().
 import os
@@ -42,7 +42,7 @@ def parse_time_to_seconds(txt: str):
     return None
 
 def pace_from_v(v: float) -> str:
-    if v is None or v <= 0 or np.isnan(v): return "—"
+    if v is None or v <= 0 or np.isnan(v): return "-"
     sec_per_km = 1000.0 / v
     m = int(sec_per_km // 60)
     s = int(round(sec_per_km % 60))
@@ -50,7 +50,7 @@ def pace_from_v(v: float) -> str:
     return f"{m}:{s:02d}/km"
 
 def format_hms(seconds: float) -> str:
-    if seconds is None or np.isnan(seconds): return "—"
+    if seconds is None or np.isnan(seconds): return "-"
     seconds = float(seconds)
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
@@ -84,7 +84,7 @@ def load_gpx(file_bytes: bytes):
         dist.append(dist[-1] + haversine(lat[i-1], lon[i-1], lat[i], lon[i]))
     return np.array(lat), np.array(lon), np.array(ele), np.array(dist)
 
-def resample_track(lat, lon, ele, dist, step_m=5.0):
+def resample_track(lat, lon, ele, dist, step_m=25.0):
     total = float(dist[-1]); s = np.arange(0.0, total + step_m, step_m)
     lat_i = np.interp(s, dist, lat)
     lon_i = np.interp(s, dist, lon)
@@ -99,7 +99,7 @@ def moving_average(a, n=5):
     pad = np.concatenate([np.full(n-1, head[0]), head])
     return pad[:len(a)]
 
-# ================= Modèles: CS/D′, Température, Pente, Surface =================
+# ================= Modèles: CS/D', Température, Pente, Surface =================
 def compute_cs_dprime_from_tests(t1000, t2000, t3200) -> Tuple[float, float]:
     D = np.array([1000.0, 2000.0, 3200.0])
     T = np.array([t1000, t2000, t3200], dtype=float)
@@ -117,6 +117,8 @@ def temperature_speed_factor(tempC: float) -> float:
 def minetti_cost_factor(grade: float) -> float:
     i = max(-0.35, min(0.35, float(grade)))
     C = (155.4*(i**5) - 30.4*(i**4) - 43.3*(i**3) + 46.3*(i**2) + 19.5*i + 3.6)
+    if abs(i) < 0.015:
+        C = 3.6 + (C - 3.6) * 0.5
     return max(1e-3, C / 3.6)
 
 def linear_grade_cost(grade, kup=6.0, kdown=2.0):
@@ -140,7 +142,7 @@ class SimConfig:
     dprime_relief_weight: float = 0.5
     target_arrival_reserve_pct: float = 10.0
     # (optionnel) si tu veux forcer une valeur précise :
-    v1500_cap_mps: float | None = None   # None => on calcule depuis CS/D′/V0
+    v1500_cap_mps: float | None = None   # None => on calcule depuis CS/D'/V0
 
 @dataclass
 class SimResult:
@@ -160,8 +162,8 @@ def simulate_course(lat_i, lon_i, ele_i, s_i,
     CS_adj = CS * fT
     V0_adj = (V0 * fT) if (V0 is not None) else None
 
-    # ---------- Calcul du plafond v1500 à partir de CS/D′ (+ V0 si fourni) ----------
-    # Temps "modèle" sur 1500 m (sans autre plafond) : t_model = (D - D′)/CS
+    # ---------- Calcul du plafond v1500 à partir de CS/D' (+ V0 si fourni) ----------
+    # Temps "modèle" sur 1500 m (sans autre plafond) : t_model = (D - D')/CS
     D_1500 = 1500.0
     t_model_1500 = max(0.0, (D_1500 - Dprime) / max(1e-6, CS_adj))
     # Si V0 existe, le temps moyen sur 1500 m ne peut pas être < 1500/V0
@@ -192,7 +194,7 @@ def simulate_course(lat_i, lon_i, ele_i, s_i,
     CS_i = CS_adj / cost
     V0_i = (V0_adj / cost) if (V0_adj is not None) else None
 
-    # --- Cible de D′ utilisé (inchangé) ---
+    # --- Cible de D' utilisé (inchangé) ---
     target_used = Dprime * (1.0 - cfg.target_arrival_reserve_pct / 100.0)
 
     def simulate_for_c(c):
@@ -201,21 +203,21 @@ def simulate_course(lat_i, lon_i, ele_i, s_i,
         # Plafond V0 local si fourni
         if V0_i is not None:
             v_raw = np.minimum(v_raw, V0_i)
-        # ⚠️ NOUVEAU : Plafond "vitesse max 1500 m" global
+        # Plafond "vitesse max 1500 m" global
         v = np.minimum(v_raw, v1500_cap)
 
         # Sécurité
         v = np.maximum(v, 0.1)
         dt = ds / v
 
-        # D′ consommé (au-dessus de CS local)
+        # D' consommé (au-dessus de CS local)
         above = np.maximum(0.0, v - CS_i)
         used = float(np.sum(above * dt))
 
         T = float(np.sum(dt))
         return used, T, v, dt
 
-    # Recherche de c pour atteindre la cible de D′ utilisé (inchangé)
+    # Recherche de c pour atteindre la cible de D' utilisé (inchangé)
     c_max = float(np.max(np.maximum(0.0, (V0_i if V0_i is not None else (CS_i + 5.0)) - CS_i)))
     low, high = 0.0, c_max
     used_high, _, _, _ = simulate_for_c(high)
@@ -253,8 +255,8 @@ def simulate_course(lat_i, lon_i, ele_i, s_i,
 
 
 # ================= UI Streamlit =================
-st.set_page_config(page_title="PredictURun — CS/D′ GPX", layout="centered")
-st.title("PredictURun — Optimisation de stratégies de course")
+st.set_page_config(page_title="PredictURun - CS/D' GPX", layout="centered")
+st.title("PredictURun - Optimisation de stratégies de course")
 
 with st.sidebar:
     st.header("Paramètres")
@@ -281,40 +283,35 @@ with st.sidebar:
     surf_name = st.selectbox("Surface dominante", list(surface_options.keys()), index=1)
     surface_factor = surface_options[surf_name]
 
-    dprime_relief_weight = st.slider("Impact D′ sur pénalité de pente", 0.0, 1.0, 0.5, 0.05)
-    reserve_arrivee = st.slider("D′ restant à l’arrivée (%)", 0, 50, 10)
+    dprime_relief_weight = st.slider("Impact D' sur pénalité de pente", 0.0, 1.0, 0.5, 0.05)
+    reserve_arrivee = st.slider("D' restant à l’arrivée (%)", 0, 50, 10)
 
-    st.markdown("### Carte (Mapbox)")
-    mb_token = st.text_input("Mapbox token (optionnel)", value=os.getenv("MAPBOX_API_KEY",""))
-    if mb_token:
-        os.environ["MAPBOX_API_KEY"] = mb_token
+    st.subheader("Chronos de test")    
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: t20 = st.text_input("20 m (s)", value=" ")
+    with c2: t1000 = st.text_input("1000 m", value=" ")
+    with c3: t2000 = st.text_input("2000 m", value=" ")
+    with c4: t3200 = st.text_input("3200 m", value=" ")
 
-st.subheader("1) Chronos de test")
-c1, c2, c3, c4 = st.columns(4)
-with c1: t20 = st.text_input("20 m (s)", value=" ")
-with c2: t1000 = st.text_input("1000 m", value=" ")
-with c3: t2000 = st.text_input("2000 m", value=" ")
-with c4: t3200 = st.text_input("3200 m", value=" ")
-
-btn_calc = st.button("Calculer V0 / CS / D′")
-V0 = CS = Dprime = None
-if btn_calc:
-    t20s = parse_time_to_seconds(t20)
-    t1000s = parse_time_to_seconds(t1000)
-    t2000s = parse_time_to_seconds(t2000)
-    t3200s = parse_time_to_seconds(t3200)
-    if None in (t20s, t1000s, t2000s, t3200s) or min(t20s, t1000s, t2000s, t3200s) <= 0:
-        st.warning("Temps invalides.")
-    else:
-        V0 = 20.0 / t20s
-        CS, Dprime = compute_cs_dprime_from_tests(t1000s, t2000s, t3200s)
-        m1, m2, m3 = st.columns(3)
-        with m1: st.metric("V0 (m/s)", f"{V0:.3f}"); st.caption(pace_from_v(V0))
-        with m2: st.metric("CS (m/s)", f"{CS:.3f}"); st.caption(pace_from_v(CS))
-        with m3: st.metric("D′ (m)", f"{Dprime:.1f}")
+    btn_calc = st.button("Calculer V0 / CS / D'")
+    V0 = CS = Dprime = None
+    if btn_calc:
+        t20s = parse_time_to_seconds(t20)
+        t1000s = parse_time_to_seconds(t1000)
+        t2000s = parse_time_to_seconds(t2000)
+        t3200s = parse_time_to_seconds(t3200)
+        if None in (t20s, t1000s, t2000s, t3200s) or min(t20s, t1000s, t2000s, t3200s) <= 0:
+            st.warning("Temps invalides.")
+        else:
+            V0 = 20.0 / t20s
+            CS, Dprime = compute_cs_dprime_from_tests(t1000s, t2000s, t3200s)
+            m1, m2, m3 = st.columns(3)
+            with m1: st.metric("V0 (m/s)", f"{V0:.3f}"); st.caption(pace_from_v(V0))
+            with m2: st.metric("CS (m/s)", f"{CS:.3f}"); st.caption(pace_from_v(CS))
+            with m3: st.metric("D′ (m)", f"{Dprime:.1f}")
 
 st.markdown("---")
-st.subheader("2) Fichier GPX (analyse au 10 m)")
+st.subheader("Fichier GPX (analyse au 10 m)")
 gpx_file = st.file_uploader("Choisir un .gpx", type=["gpx"])
 
 if gpx_file is not None:
@@ -331,7 +328,7 @@ if gpx_file is not None:
         st.error("GPX trop court/invalide.")
         st.stop()
 
-    st.success(f"GPX chargé : {dist[-1]/1000:.2f} km — points bruts: {len(lat)}")
+    st.success(f"GPX chargé : {dist[-1]/1000:.2f} km - points bruts: {len(lat)}")
     lat_i, lon_i, ele_i, s_i = resample_track(lat, lon, ele, dist, 10.0)
     st.caption(f"Resample: {len(lat_i)} points (par 10 m)")
 
@@ -351,13 +348,12 @@ if gpx_file is not None:
                   get_position="position", get_text="text", get_size=20, get_color=[255, 255, 255], get_alignment_baseline="'bottom'")  # blanc
     ]
     view_state = pdk.ViewState(latitude=float(np.mean(lat_i)), longitude=float(np.mean(lon_i)), zoom=12, pitch=45)
-    map_style = "mapbox://styles/mapbox/satellite-v9" if os.environ.get("MAPBOX_API_KEY") else None
-    st.pydeck_chart(pdk.Deck(layers=layers, initial_view_state=view_state, map_style=map_style))
+    st.pydeck_chart(pdk.Deck(layers=layers, initial_view_state=view_state))
 
     # ---------------- Profil altimétrique : X en mètres, ticks 500 m ----------------
     fig, ax = plt.subplots()
     x_m = s_i  # distance en mètres
-    ax.plot(x_m, ele_i, linewidth=1.5, color="black")
+    ax.plot(x_m, ele_i, linewidth=1.5, color="green")
     ax.set_xlabel("Distance (m)")
     ax.set_ylabel("Altitude (m)")
     ax.set_title("Profil altimétrique")
@@ -366,7 +362,7 @@ if gpx_file is not None:
 
     # ---------------- Simulation ----------------
     if V0 is None or CS is None or Dprime is None:
-        st.info("Calculez d'abord V0 / CS / D′.")
+        st.info("Calculez d'abord V0 / CS / D'.")
     else:
         cfg = SimConfig(
             use_minetti=(slope_model=="Minetti"),
@@ -383,10 +379,10 @@ if gpx_file is not None:
         cA, cB = st.columns(2)
         with cA:
             fig2, ax2 = plt.subplots()
-            ax2.plot(sim.df["km"]*1000.0, sim.df["Dprime_bal"], color="black")  # X en mètres
+            ax2.plot(sim.df["km"]*1000.0, sim.df["Dprime_bal"], color="green")  # X en mètres
             ax2.set_xlabel("Distance (m)")
-            ax2.set_ylabel("D′bal (m)")
-            ax2.set_title("Évolution de D′bal")
+            ax2.set_ylabel("D'bal (m)")
+            ax2.set_title("Évolution de D'bal")
             ax2.xaxis.set_major_locator(MultipleLocator(500))  # repères 500 m
             st.pyplot(fig2, use_container_width=True)
         with cB:
@@ -394,7 +390,7 @@ if gpx_file is not None:
             fig3, ax3 = plt.subplots()
             pace_sec = 1000.0 / np.maximum(1e-6, sim.df["v"].to_numpy())  # sec/km
             x_m_sim = (sim.df["km"].to_numpy() * 1000.0)  # mètres
-            ax3.plot(x_m_sim, pace_sec, linewidth=1.5, color="black")
+            ax3.plot(x_m_sim, pace_sec, linewidth=1.5, color="green")
             ax3.set_xlabel("Distance (m)")
             ax3.set_ylabel("Allure (min:s / km)")
             ax3.set_title("Vitesse simulée")
@@ -449,16 +445,16 @@ if gpx_file is not None:
             st.markdown("**Paramètres issus de vos tests**")
             st.markdown(f"- V0 = **{V0:.3f} m/s**")
             st.markdown(f"- CS = **{CS:.3f} m/s**")
-            st.markdown(f"- D′ = **{Dprime:.1f} m**")
+            st.markdown(f"- D' = **{Dprime:.1f} m**")
             st.markdown(f"- Température course T = **{tempC:.1f}°C** ⇒ facteur température $f_T = {temperature_speed_factor(tempC):.3f}$")
             st.markdown(f"- Surface « {surf_name} » ⇒ facteur coût **{surface_factor:.3f}**")
             st.markdown(f"- Pondération D′ (curseur) = **{dprime_relief_weight:.2f}**")
             st.markdown(f"- Réserve visée à l’arrivée = **{reserve_arrivee}%**")
 
-            st.markdown("### 1) Régression CS/D′ à partir des tests (1000/2000/3200)")
+            st.markdown("### Régression CS/D' à partir des tests (1000/2000/3200)")
             st.latex(r"d = CS \cdot t + D'")
 
-            st.markdown("### 2) Température (optimum 15 °C)")
+            st.markdown("### Température (optimum 15 °C)")
             st.latex(r"""
 f_T = 1 - p \cdot |T-15|,\quad
 p = \begin{cases}
@@ -468,12 +464,12 @@ p = \begin{cases}
 """)
             st.markdown(f"Donc $CS_T = CS \\cdot f_T = {CS*temperature_speed_factor(tempC):.3f}$ m/s et $V0_T = V0 \\cdot f_T = {V0*temperature_speed_factor(tempC):.3f}$ m/s.")
 
-            st.markdown("### 3) Relief (coût de pente)")
+            st.markdown("### Relief (coût de pente)")
             st.latex(r"C(i) = 155.4\,i^5 - 30.4\,i^4 - 43.3\,i^3 + 46.3\,i^2 + 19.5\,i + 3.6,\quad \text{facteur} = \frac{C(i)}{3.6}")
-            st.markdown("Modèle linéaire optionnel :")
+            st.markdown("Modèle linéaire optionnel :")
             st.latex(r"\text{facteur} = \begin{cases} 1 + k_\uparrow\,i & (i\ge0) \\ 1 + k_\downarrow\,i & (i<0) \end{cases}")
 
-            st.markdown("### 4) Pondération par D′ sur la pénalité de pente")
+            st.markdown("### Pondération par D' sur la pénalité de pente")
             st.latex(r"""
 \Delta = (\text{facteur}-1),\quad
 \Delta \leftarrow
@@ -486,12 +482,12 @@ w = \min(1, D'/500)\cdot \text{poids}
             st.markdown(f"Facteur final $C_f = 1 + \Delta$, puis *surface* = {surface_factor:.3f}.")
             st.latex(r"CS_i = \frac{CS_T}{C_f},\quad V0_i = \frac{V0_T}{C_f}")
 
-            st.markdown("### 5) Surplus constant et simulation D′bal")
+            st.markdown("### Surplus constant et simulation D'bal")
             st.latex(r"v = \min(V0_i,\; CS_i + c^*),\qquad dt = \frac{ds}{v}")
             st.latex(r"\text{usage D'} = \sum (v - CS_i)\,dt,\qquad D'_{\text{bal}} = D' - \text{usage cumulé}")
 
-            st.markdown("### 6) Tableau récapitulatif (tous les 100 m)")
-            st.latex(r"v_{100} = \frac{100}{\sum dt_{(100m)}},\qquad \text{allure} = \frac{1000}{v_{100}}\; (\text{min:s/km})")
-            st.markdown("On affiche aussi le **temps écoulé** à la fin de chaque 100 m.")
+            st.markdown("### Tableau récapitulatif (tous les 100 m)")
+            st.latex(r"v_{400} = \frac{400}{\sum dt_{(400m)}},\qquad \text{allure} = \frac{1000}{v_{400}}\; (\text{min:s/km})")
+            st.markdown("On affiche aussi le **temps écoulé** à la fin de chaque 400 m.")
 
-st.caption("Modèle: CS/D′ + température (optimum 15 °C) + surface + pente (Minetti/linéaire) pondéré par D′, par 10 m.")
+st.caption("Modèle: CS/D' + température (optimum 15 °C) + surface + pente (Minetti/linéaire) pondéré par D', par 10 m.")
