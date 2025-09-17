@@ -273,7 +273,7 @@ with st.sidebar:
         "Piste tartan": 1.00,
         "Route / Asphalte": 1.01,
         "Béton": 1.015,
-        "Gravier / Chemin dur": 1.04,
+        "Gravier / Chemin dur": 1.025,
         "Gazon": 1.06,
         "Trail roulant": 1.08,
         "Trail technique": 1.15,
