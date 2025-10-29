@@ -489,3 +489,5 @@ w = \min(1, D'/500)\cdot \text{poids}
             st.markdown("On affiche aussi le **temps écoulé** à la fin de chaque 400 m.")
 
 st.caption("Modèle: CS/D' + température (optimum 15 °C) + surface + pente (Minetti/linéaire) pondéré par D', par 20 m.")
+
+st.caption("Créé par Charles livier Huapaya Proulx")
