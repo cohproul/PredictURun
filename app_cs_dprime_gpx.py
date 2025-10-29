@@ -1,6 +1,4 @@
 # PredictURun - CS/D' sur GPX (sécurisé LaTeX)
-# Couleurs comme ta version (10) : tracé rouge, points km bleus, texte noir, thème Streamlit clair.
-# Ajouts : tableau 100 m (distance, allure du dernier 100 m, temps écoulé) + explications avec st.latex().
 import os
 import math
 from dataclasses import dataclass
@@ -157,7 +155,7 @@ def simulate_course(lat_i, lon_i, ele_i, s_i,
     - CS en m/s ; Dprime en m ; V0 en m/s (optionnel, peut être None)
     - Cap vitesse : v(t) <= v1500 (vitesse moyenne max prédite sur 1500 m)
     """
-    # --- Ajustement température (comme avant) ---
+    # --- Ajustement température  ---
     fT = temperature_speed_factor(cfg.tempC)
     CS_adj = CS * fT
     V0_adj = (V0 * fT) if (V0 is not None) else None
@@ -174,13 +172,13 @@ def simulate_course(lat_i, lon_i, ele_i, s_i,
     v1500_cap = (cfg.v1500_cap_mps if cfg.v1500_cap_mps is not None
                  else (D_1500 / t1500 if np.isfinite(t1500) and t1500 > 0 else float("inf")))
 
-    # --- Géométrie parcours / pentes (inchangé) ---
+    # --- Géométrie parcours / pentes  ---
     ds = np.diff(s_i); de = np.diff(ele_i)
     valid = ds > 0.05
     ds = ds[valid]; de = de[valid]
     grades = moving_average(de / ds, 5)
 
-    # --- Coûts (Minetti vs linéaire) + pondération D′ relief (inchangé) ---
+    # --- Coûts (Minetti vs linéaire) + pondération D′ relief  ---
     base_cost = (np.array([minetti_cost_factor(g) for g in grades]) if cfg.use_minetti
                  else np.array([linear_grade_cost(g, cfg.kup, cfg.kdown) for g in grades]))
     cost = np.array([
@@ -190,11 +188,11 @@ def simulate_course(lat_i, lon_i, ele_i, s_i,
     # Surface globale (facteur multiplicatif sur le coût)
     cost *= cfg.surface_factor
 
-    # --- CS/V0 locaux (inchangé) ---
+    # --- CS/V0 locaux  ---
     CS_i = CS_adj / cost
     V0_i = (V0_adj / cost) if (V0_adj is not None) else None
 
-    # --- Cible de D' utilisé (inchangé) ---
+    # --- Cible de D' utilisé  ---
     target_used = Dprime * (1.0 - cfg.target_arrival_reserve_pct / 100.0)
 
     def simulate_for_c(c):
@@ -217,7 +215,7 @@ def simulate_course(lat_i, lon_i, ele_i, s_i,
         T = float(np.sum(dt))
         return used, T, v, dt
 
-    # Recherche de c pour atteindre la cible de D' utilisé (inchangé)
+    # Recherche de c pour atteindre la cible de D' utilisé 
     c_max = float(np.max(np.maximum(0.0, (V0_i if V0_i is not None else (CS_i + 5.0)) - CS_i)))
     low, high = 0.0, c_max
     used_high, _, _, _ = simulate_for_c(high)
@@ -311,7 +309,7 @@ with st.sidebar:
             with m3: st.metric("D′ (m)", f"{Dprime:.1f}")
 
 st.markdown("---")
-st.subheader("Fichier GPX (analyse au 10 m)")
+st.subheader("Fichier GPX (analyse au 20 m)")
 gpx_file = st.file_uploader("Choisir un .gpx", type=["gpx"])
 
 if gpx_file is not None:
@@ -409,8 +407,8 @@ if gpx_file is not None:
             ax3.yaxis.set_major_formatter(FuncFormatter(_fmt_pace))
             st.pyplot(fig3, use_container_width=True)
 
-        # ---------------- Tableau récapitulatif : tous les 100 m ----------------
-        st.markdown("### Tableau récapitulatif (tous les 100 m)")
+        # ---------------- Tableau récapitulatif : tous les 400 m ----------------
+        st.markdown("### Tableau récapitulatif (tous les 400 m)")
         df_seg = sim.df.copy()
         df_seg["cum_dist"] = df_seg["ds"].cumsum()
         df_seg["cum_time"] = df_seg["dt"].cumsum()
@@ -490,4 +488,4 @@ w = \min(1, D'/500)\cdot \text{poids}
             st.latex(r"v_{400} = \frac{400}{\sum dt_{(400m)}},\qquad \text{allure} = \frac{1000}{v_{400}}\; (\text{min:s/km})")
             st.markdown("On affiche aussi le **temps écoulé** à la fin de chaque 400 m.")
 
-st.caption("Modèle: CS/D' + température (optimum 15 °C) + surface + pente (Minetti/linéaire) pondéré par D', par 10 m.")
+st.caption("Modèle: CS/D' + température (optimum 15 °C) + surface + pente (Minetti/linéaire) pondéré par D', par 20 m.")
