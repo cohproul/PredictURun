@@ -490,4 +490,4 @@ w = \min(1, D'/500)\cdot \text{poids}
 
 st.caption("Modèle: CS/D' + température (optimum 15 °C) + surface + pente (Minetti/linéaire) pondéré par D', par 20 m.")
 
-st.caption("Créé par Charles livier Huapaya Proulx")
+st.caption("Créé par Charles Olivier Huapaya Proulx")
